@@ -1,6 +1,5 @@
 -include config.mk
 
-BUILDTYPE ?= Release
 PYTHON ?= python
 DESTDIR ?=
 SIGN ?=
@@ -18,6 +17,10 @@ PWD = $(CURDIR)
 
 ifdef JOBS
   PARALLEL_ARGS = -j $(JOBS)
+endif
+
+ifeq ($(BUILDTYPE), Debug)
+  CONFIG_FLAGS += --debug
 endif
 
 ifdef QUICKCHECK
@@ -87,12 +90,12 @@ help: ## Print help for targets with comments.
 # and recreated which can break the addons build when running test-ci
 # See comments on the build-addons target for some more info
 $(NODE_EXE): config.gypi out/Makefile
-	$(MAKE) -C out BUILDTYPE=Release V=$(V)
-	if [ ! -r $@ -o ! -L $@ ]; then ln -fs out/Release/$(NODE_EXE) $@; fi
+	$(MAKE) -C out BUILDTYPE=$(BUILDTYPE) V=$(V)
+	if [ ! -r $@ -o ! -L $@ ]; then ln -fs out/$(BUILDTYPE)/$(NODE_EXE) $@; fi
 
 $(NODE_G_EXE): config.gypi out/Makefile
-	$(MAKE) -C out BUILDTYPE=Debug V=$(V)
-	if [ ! -r $@ -o ! -L $@ ]; then ln -fs out/Debug/$(NODE_EXE) $@; fi
+	$(MAKE) -C out BUILDTYPE=$(BUILDTYPE) V=$(V)
+	if [ ! -r $@ -o ! -L $@ ]; then ln -fs out/$(BUILDTYPE)/$(NODE_EXE) $@; fi
 
 out/Makefile: common.gypi deps/uv/uv.gyp deps/http_parser/http_parser.gyp \
               deps/zlib/zlib.gyp deps/v8/gypfiles/toolchain.gypi \
@@ -199,12 +202,12 @@ coverage-test: coverage-build
 	mv lib_ lib
 	mkdir -p coverage .cov_tmp
 	$(NODE) ./node_modules/.bin/istanbul-merge --out \
-		.cov_tmp/libcov.json 'out/Release/.coverage/coverage-*.json'
+		.cov_tmp/libcov.json 'out/$(BUILDTYPE)/.coverage/coverage-*.json'
 	(cd lib && .$(NODE) ../node_modules/.bin/nyc report \
 		--temp-directory "$(CURDIR)/.cov_tmp" \
 		--report-dir "../coverage")
 	-(cd out && "../gcovr/scripts/gcovr" --gcov-exclude='.*deps' \
-		--gcov-exclude='.*usr' -v -r Release/obj.target \
+		--gcov-exclude='.*usr' -v -r $(BUILDTYPE)/obj.target \
 		--html --html-detail -o ../coverage/cxxcoverage.html \
 		--gcov-executable="$(GCOV)")
 	mv lib lib_
@@ -277,7 +280,7 @@ test-valgrind: all
 test-check-deopts: all
 	$(PYTHON) tools/test.py --mode=release --check-deopts parallel sequential -J
 
-benchmark/misc/function_call/build/Release/binding.node: all \
+benchmark/misc/function_call/build/$(BUILDTYPE)/binding.node: all \
 		benchmark/misc/function_call/binding.cc \
 		benchmark/misc/function_call/binding.gyp
 	$(NODE) deps/npm/node_modules/node-gyp/bin/node-gyp rebuild \
@@ -288,7 +291,7 @@ benchmark/misc/function_call/build/Release/binding.node: all \
 # Implicitly depends on $(NODE_EXE).  We don't depend on it explicitly because
 # it always triggers a rebuild due to it being a .PHONY rule.  See the comment
 # near the build-addons rule for more background.
-test/gc/build/Release/binding.node: test/gc/binding.cc test/gc/binding.gyp
+test/gc/build/$(BUILDTYPE)/binding.node: test/gc/binding.cc test/gc/binding.gyp
 	$(NODE) deps/npm/node_modules/node-gyp/bin/node-gyp rebuild \
 		--python="$(PYTHON)" \
 		--directory="$(shell pwd)/test/gc" \
@@ -390,14 +393,14 @@ build-addons-napi: | $(NODE_EXE) test/addons-napi/.buildstamp
 .PHONY: clear-stalled
 clear-stalled:
 	# Clean up any leftover processes but don't error if found.
-	ps awwx | grep Release/node | grep -v grep | cat
-	@PS_OUT=`ps awwx | grep Release/node | grep -v grep | awk '{print $$1}'`; \
+	ps awwx | grep $(BUILDTYPE)/node | grep -v grep | cat
+	@PS_OUT=`ps awwx | grep $(BUILDTYPE)/node | grep -v grep | awk '{print $$1}'`; \
 	if [ "$${PS_OUT}" ]; then \
 		echo $${PS_OUT} | xargs kill; \
 	fi
 
 .PHONY: test-gc
-test-gc: all test/gc/build/Release/binding.node
+test-gc: all test/gc/build/$(BUILDTYPE)/binding.node
 	$(PYTHON) tools/test.py --mode=release gc
 
 .PHONY: test-gc-clean
@@ -409,7 +412,7 @@ test-build: | all build-addons build-addons-napi
 test-build-addons-napi: all build-addons-napi
 
 .PHONY: test-all
-test-all: test-build test/gc/build/Release/binding.node ## Run everything in test/.
+test-all: test-build test/gc/build/$(BUILDTYPE)/binding.node ## Run everything in test/.
 	$(PYTHON) tools/test.py --mode=debug,release
 
 test-all-valgrind: test-build
@@ -425,7 +428,7 @@ CI_DOC := doctool
 test-ci-native: LOGLEVEL := info
 test-ci-native: | test/addons/.buildstamp test/addons-napi/.buildstamp
 	$(PYTHON) tools/test.py $(PARALLEL_ARGS) -p tap --logfile test.tap \
-		--mode=release --flaky-tests=$(FLAKY_TESTS) \
+		--mode=$(BUILDTYPE_LOWER) --flaky-tests=$(FLAKY_TESTS) \
 		$(TEST_CI_ARGS) $(CI_NATIVE_SUITES)
 
 .PHONY: test-ci-js
@@ -433,11 +436,11 @@ test-ci-native: | test/addons/.buildstamp test/addons-napi/.buildstamp
 # Related CI job: node-test-commit-arm-fanned
 test-ci-js: | clear-stalled
 	$(PYTHON) tools/test.py $(PARALLEL_ARGS) -p tap --logfile test.tap \
-		--mode=release --flaky-tests=$(FLAKY_TESTS) \
+		--mode=$(BUILDTYPE_LOWER) --flaky-tests=$(FLAKY_TESTS) \
 		$(TEST_CI_ARGS) $(CI_JS_SUITES)
 	# Clean up any leftover processes, error if found.
-	ps awwx | grep Release/node | grep -v grep | cat
-	@PS_OUT=`ps awwx | grep Release/node | grep -v grep | awk '{print $$1}'`; \
+	ps awwx | grep $(BUILDTYPE)/node | grep -v grep | cat
+	@PS_OUT=`ps awwx | grep $(BUILDTYPE)/node | grep -v grep | awk '{print $$1}'`; \
 	if [ "$${PS_OUT}" ]; then \
 		echo $${PS_OUT} | xargs kill; exit 1; \
 	fi
@@ -446,13 +449,13 @@ test-ci-js: | clear-stalled
 # Related CI jobs: most CI tests, excluding node-test-commit-arm-fanned
 test-ci: LOGLEVEL := info
 test-ci: | clear-stalled build-addons build-addons-napi doc-only
-	out/Release/cctest --gtest_output=tap:cctest.tap
+	out/$(BUILDTYPE)/cctest --gtest_output=tap:cctest.tap
 	$(PYTHON) tools/test.py $(PARALLEL_ARGS) -p tap --logfile test.tap \
 		--mode=release --flaky-tests=$(FLAKY_TESTS) \
 		$(TEST_CI_ARGS) $(CI_JS_SUITES) $(CI_NATIVE_SUITES) $(CI_DOC)
 	# Clean up any leftover processes, error if found.
-	ps awwx | grep Release/node | grep -v grep | cat
-	@PS_OUT=`ps awwx | grep Release/node | grep -v grep | awk '{print $$1}'`; \
+	ps awwx | grep $(BUILDTYPE)/node | grep -v grep | cat
+	@PS_OUT=`ps awwx | grep $(BUILDTYPE)/node | grep -v grep | awk '{print $$1}'`; \
 	if [ "$${PS_OUT}" ]; then \
 		echo $${PS_OUT} | xargs kill; exit 1; \
 	fi
